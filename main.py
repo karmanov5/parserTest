@@ -9,6 +9,8 @@ import pandas as pd
 import re, pickle, logging, os, time, datetime, json
 from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
+import requests as req
+from bs4 import BeautifulSoup
 
 options = Options()
 options.add_argument("--headless")
@@ -45,7 +47,7 @@ def get_cities(location : WebElement):
     return location.find_element(By.CLASS_NAME, 'bottom').find_elements(By.CLASS_NAME, "row")
 
 
-def parse_page(id: str, page: str):
+def parse_page_old(id: str, page: str):
     set_info(f"парсится {page}")
     driver = Edge(options=options)
     driver.set_page_load_timeout(300)
@@ -138,6 +140,79 @@ def parse_page(id: str, page: str):
     prop['coordinates'] = [prop_coordinates]
 
     return prop
+
+
+from random import uniform
+headers = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://google.com"
+}
+from requests import Session, exceptions
+
+def parse_page(id: str, page: str,  s: Session):
+    s.headers.update(headers)
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            response = s.get(page)
+            if response.status_code == 200:
+                break
+        except exceptions.ConnectionError:
+            if attempt < max_retries - 1:
+                print("Ошибка соединения, повтор попытки...")
+                time.sleep(uniform(1, 3))
+            else:
+                raise
+    # response = s.get(page, timeout=(5, 30))
+    
+    if response.status_code == 200:
+        # set_info(f'{page}: начат парсинг!')
+        data = response.content.decode('utf-8')
+        bs = BeautifulSoup(data, 'lxml')
+        prop = {}
+        prop['id'] = [id]
+        prop['href'] = [page]
+        prop_name = bs.select_one('h1').text
+        if '404' in prop_name:
+            set_info(f"{page}: не существует! Пропускается парсинг")
+            return
+        prop['property'] = [prop_name]
+        
+        aside = bs.find(class_='aside')
+        if aside:
+            params = aside.find(class_='params')
+            if params:
+                names = [k.text for k in params.find_all(class_='name')]
+                values = [v.contents[0] for v in params.find_all(class_='value')]
+                for name, value in zip(names, values):
+                    prop[name] = [value]
+            
+        
+            seller_name = aside.select_one('div.contact_agency.right_block > div.company.center > div.info > div > a')
+            prop['seller_name'] = [seller_name.text.strip() if seller_name else '']
+            seller_href = aside.select_one('div.contact_agency.right_block > div.company.center > div.info > div > a')
+            prop['seller_href'] = [seller_href.get('href', '') if seller_href else '']
+        
+        description = bs.select_one('div[itemprop="description"]')
+        prop['description'] = [description.text.strip() if description else '']
+
+
+        features = bs.select('div.features')
+        if features:
+            for item in features:
+                prop[item.select_one('h3').text] = [', '.join([i.text for i in item.select_one('ul').contents])]
+        
+        # {item.select_one('h3').text: ', '.join([i.text for i in item.select_one('ul').contents]) for item in bs.select('div.features')}
+        map_block = bs.select_one('div#map_block')
+        if map_block:
+            prop['coordinates'] = [parse_href(map_block.select('ul li')[1]['onclick'])]
+        # set_info(f'{page}: закончен парсинг!')
+        time.sleep(uniform(2, 5))
+        return prop
+    else:
+        set_info(f'страница не загружается {page}')
+
 
 
 def parse_pages_for_list(page: str):
@@ -278,17 +353,17 @@ def main():
     local_files = os.listdir('cities/')[1:]
     local_cities_files =[filename.replace('links_', '').replace('.json', '') for filename in os.listdir('cities/')[1:]]
     cities_dict = {k: v for k, v in cities_dict.items() if k not in local_cities_files}
-    if len(cities_dict) != 0:
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            results = list(executor.map(lambda x: parse_pages_for_links(*x), cities_dict.items()))
+    # if len(cities_dict) != 0:
+    #     with ThreadPoolExecutor(max_workers=5) as executor:
+    #         results = list(executor.map(lambda x: parse_pages_for_links(*x), cities_dict.items()))
 
-        for worker in results:
-            ids, links = worker
-            properity_ids += ids
-            properity_links += links
+    #     for worker in results:
+    #         ids, links = worker
+    #         properity_ids += ids
+    #         properity_links += links
     
-        set_info('все ссылки с городов получены. Нажмите любую кнопку, чтобы перейти к следующему этапу парсинга!')
-        input()
+    #     set_info('все ссылки с городов получены. Нажмите любую кнопку, чтобы перейти к следующему этапу парсинга!')
+    #     input()
 
     set_info('парсинг страниц недвижимости начался')
     results_files = [filename.replace('.xlsx', '') for filename in os.listdir('results/')]
@@ -299,8 +374,9 @@ def main():
         with open(os.path.join('cities', file), 'r') as f:
             properties = json.load(f)
             set_info(f'начало процесса парсинга города {city_name}. Всего страниц для парсинга {len(properties)}')
-            with ThreadPoolExecutor(max_workers=10) as executor:
-                results = list(tqdm(executor.map(lambda x: parse_page(*x), properties.items()), total=len(properties)))
+            with Session() as s:
+                with ThreadPoolExecutor(max_workers=3) as executor:
+                    results = list(tqdm(executor.map(lambda x: parse_page(x[0], x[1], s), properties.items()), total=len(properties)))
             
             set_info(f'парсинг страниц недвижимости города {city_name} закончен! Ввод результатов в таблицу')
             df = pd.DataFrame()
