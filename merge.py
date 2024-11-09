@@ -10,7 +10,9 @@ import json
 logging.basicConfig(level=logging.DEBUG, filename='logs.log', filemode='w', format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', encoding='utf8', datefmt='%Y-%m-%d %H:%M:%S')
 
 
-directory = r'H:\karma\Desktop\parserTest\results'
+# directory = r'H:\karma\Desktop\parserTest\results'
+directory  = 'parserTest/'
+
 
 def set_info(message: str):
     print(datetime.datetime.now(), message)
