@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.DEBUG, filename='logs.log', filemode='w', form
 
 
 # directory = r'H:\karma\Desktop\parserTest\results'
-directory  = 'parserTest/'
+directory  = 'kaggle/working/parserTest/'
 
 
 def set_info(message: str):
